@@ -22,15 +22,49 @@ body.stereo #divider{display:block}
 <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 <script>
 'use strict';
-// One renderer, two eye cameras. No WebXR session or external polyfill is required.
-AFRAME.registerComponent('cardboard-view',{
- init(){this.enabled=false;this.stereo=new THREE.StereoCamera();this.stereo.aspect=.5;this.size=new THREE.Vector2();this.el.addEventListener('renderstart',()=>this.install());},
- install(){const r=this.el.renderer,original=r.render.bind(r);this.original=original;r.render=(world,camera)=>{if(!this.enabled||camera!==this.el.camera)return original(world,camera);world.updateMatrixWorld();camera.updateMatrixWorld();this.stereo.update(camera);r.getSize(this.size);const w=this.size.x,h=this.size.y,auto=r.autoClear;r.autoClear=false;r.setScissorTest(false);r.clear();r.setScissorTest(true);r.setScissor(0,0,w/2,h);r.setViewport(0,0,w/2,h);original(world,this.stereo.cameraL);r.setScissor(w/2,0,w/2,h);r.setViewport(w/2,0,w/2,h);original(world,this.stereo.cameraR);r.setScissorTest(false);r.setViewport(0,0,w,h);r.autoClear=auto;};}
+AFRAME.registerComponent('cardboard-view', {
+  init() {
+    this.enabled = false;
+    const stereo = new THREE.StereoCamera();
+    stereo.aspect = .5;
+    const size = new THREE.Vector2();
+    const scene = this.el;
+
+    scene.addEventListener('renderstart', () => {
+      const renderer = scene.renderer;
+      const render = renderer.render.bind(renderer);
+      renderer.render = (world, camera) => {
+        if (!this.enabled || camera !== scene.camera) return render(world, camera);
+
+        // Render each eye into its own half of the canvas.
+        world.updateMatrixWorld();
+        camera.updateMatrixWorld();
+        stereo.update(camera);
+        renderer.getSize(size);
+        const halfWidth = size.x / 2;
+        const autoClear = renderer.autoClear;
+
+        renderer.autoClear = false;
+        renderer.setScissorTest(false);
+        renderer.clear();
+        renderer.setScissorTest(true);
+        for (const [eye, x] of [[stereo.cameraL, 0], [stereo.cameraR, halfWidth]]) {
+          renderer.setScissor(x, 0, halfWidth, size.y);
+          renderer.setViewport(x, 0, halfWidth, size.y);
+          render(world, eye);
+        }
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, size.x, size.y);
+        renderer.autoClear = autoClear;
+      };
+    });
+  }
 });
 const GAZE_MS = 250;
 const FLIGHT_MS = 230;
 const ROUND_MS = 30000;
 const BREAK_MS = 420;
+const TARGET_SETTLE_MS = 150;
 const SECTOR_COUNT = 8;
 const DEPTHS = [3.45, 5.5, 8.2];
 const TARGET_COLORS = ['#cf644c', '#268799', '#dda844'];
@@ -48,6 +82,15 @@ AFRAME.registerComponent('rush', {
     this.state = 'ready';
     this.active = false;
     this.score = 0;
+    this.createTargets();
+    this.createShards();
+    this.resetGaze();
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.stopRound();
+      else this.resetGaze();
+    });
+  },
+  createTargets() {
     this.slots = [];
     this.targets = [];
     const template = document.getElementById('target-template');
@@ -62,23 +105,17 @@ AFRAME.registerComponent('rush', {
         }
       }
       for (let row = 0; row < 2; row++) {
-        const index = this.targets.length;
+        const homeSlot = sector * 4 + (row ? 3 : 0);
         const target = template.content.firstElementChild.cloneNode(true);
-        const color = TARGET_COLORS[index % TARGET_COLORS.length];
+        const color = TARGET_COLORS[this.targets.length % TARGET_COLORS.length];
+        const material = 'shader: flat; color: ' + color;
         target.dataset.color = color;
-        target.setAttribute('material', 'shader: flat; color: ' + color);
-        target.lastElementChild.setAttribute('material', 'shader: flat; color: ' + color);
+        target.setAttribute('material', material);
+        target.lastElementChild.setAttribute('material', material);
         this.el.appendChild(target);
-        this.targets.push({el: target, slot: sector * 4 + (row ? 3 : 0), moving: row === 1});
+        this.targets.push({el: target, homeSlot, slot: homeSlot, moving: row === 1});
       }
     }
-    this.createShards();
-    this.resetGaze();
-    document.addEventListener('visibilitychange', () => {
-      this.resetGaze();
-      if (document.hidden && this.state === 'playing') this.finish(false);
-      if (document.hidden && this.flight) this.cancelFlight();
-    });
   },
   resetGaze() {
     if (this.focus) this.progress.setAttribute('theta-length', 0);
@@ -92,24 +129,24 @@ AFRAME.registerComponent('rush', {
     this.score = 0;
     this.end = now + ROUND_MS;
     this.state = 'playing';
+    this.action.classList.remove('aimable');
     this.action.setAttribute('visible', false);
     this.result.setAttribute('visible', false);
     this.notice.setAttribute('visible', false);
     this.hud.setAttribute('visible', true);
-    this.timer.setAttribute('value', '30s');
-    this.seconds = 30;
+    this.seconds = ROUND_MS / 1000;
+    this.timer.setAttribute('value', this.seconds + 's');
     this.scoreText.setAttribute('value', '0');
-    this.targets.forEach((target, index) => {
-      target.slot = Math.floor(index / 2) * 4 + (target.moving ? 3 : 0);
-      target.born = now;
-      this.place(target, now);
-      target.el.setAttribute('visible', true);
-      target.el.classList.add('aimable');
-      target.el.removeAttribute('animation__pop');
-      target.el.object3D.scale.setScalar(1);
-      target.el.dataset.born = String(now);
-    });
+    for (const target of this.targets) this.showTarget(target, target.homeSlot, now);
     this.refresh();
+  },
+  stopRound() {
+    if (this.state === 'playing') {
+      this.finish(false);
+    } else {
+      this.cancelFlight();
+      this.resetGaze();
+    }
   },
   finish(timeUp = true) {
     this.cancelFlight();
@@ -139,9 +176,9 @@ AFRAME.registerComponent('rush', {
     this.shardColor = new THREE.MeshBasicMaterial({side: THREE.DoubleSide});
     const cream = new THREE.MeshBasicMaterial({color: '#f2e4c5', side: THREE.DoubleSide});
     this.fragments = [];
+    const size = Math.PI / 3;
     for (let index = 0; index < 6; index++) {
       const piece = new THREE.Group();
-      const size = Math.PI / 3;
       const angle = index * size;
       [.44, .34, .16].forEach((radius, layer) => {
         const geometry = new THREE.CircleGeometry(radius, 6, angle, size - .025);
@@ -195,18 +232,29 @@ AFRAME.registerComponent('rush', {
     const target = this.targets.find(candidate => candidate.el === element);
     const oldSector = this.slots[target.slot].sector;
     const taken = new Set(this.targets.map(candidate => candidate.slot));
-    const free = this.slots.map((_, index) => index).filter(index => !taken.has(index));
+    const free = [];
+    for (let index = 0; index < this.slots.length; index++) {
+      if (!taken.has(index)) free.push(index);
+    }
     const otherSectors = free.filter(index => this.slots[index].sector !== oldSector);
     const choices = otherSectors.length ? otherSectors : free;
-    target.slot = choices[Math.floor(Math.random() * choices.length)];
+    const slot = choices[Math.floor(Math.random() * choices.length)];
+    this.showTarget(target, slot, now, true);
+    this.refresh();
+  },
+  showTarget(target, slot, now, pop = false) {
+    const element = target.el;
+    target.slot = slot;
     target.born = now;
     this.place(target, now);
     element.removeAttribute('animation__pop');
-    element.object3D.scale.setScalar(.15);
-    element.setAttribute('animation__pop', 'property: scale; from: .15 .15 .15; to: 1 1 1; dur: 140; easing: easeOutQuad');
+    element.object3D.scale.setScalar(pop ? .15 : 1);
+    if (pop) {
+      element.setAttribute('animation__pop', 'property: scale; from: .15 .15 .15; to: 1 1 1; dur: 140; easing: easeOutQuad');
+    }
     element.dataset.born = String(now);
+    element.setAttribute('visible', true);
     element.classList.add('aimable');
-    this.refresh();
   },
   points(radius) {
     return radius <= .16 ? 10 : radius <= .34 ? 5 : 1;
@@ -237,7 +285,6 @@ AFRAME.registerComponent('rush', {
     this.cancelFlight();
     this.beginBreak(shot.target, now);
     if (shot.target === this.action) {
-      this.action.classList.remove('aimable');
       this.start(now);
       return;
     }
@@ -270,7 +317,7 @@ AFRAME.registerComponent('rush', {
     const ray = this.aim.components.raycaster;
     ray.checkIntersections();
     const target = ray.intersectedEls.find(el => el.classList.contains('aimable'));
-    if (!target || now - Number(target.dataset.born || 0) < 150) {
+    if (!target || now - Number(target.dataset.born || 0) < TARGET_SETTLE_MS) {
       this.resetGaze();
       return;
     }
@@ -336,11 +383,11 @@ const back = document.getElementById('back');
 const welcome = document.getElementById('welcome');
 const mode = new URLSearchParams(location.search).get('mode');
 const stereo = mode === 'cardboard' || (mode !== 'normal' && matchMedia('(pointer: coarse)').matches);
-function ready() {
+function enablePlay() {
   play.disabled = false;
 }
-scene.addEventListener('loaded', ready, {once: true});
-if (scene.hasLoaded) ready();
+if (scene.hasLoaded) enablePlay();
+else scene.addEventListener('loaded', enablePlay, {once: true});
 play.onclick = async () => {
   play.disabled = true;
   try {
@@ -365,10 +412,8 @@ play.onclick = async () => {
 };
 back.onclick = () => {
   const game = scene.components.rush;
-  if (game.state === 'playing') game.finish(false);
-  game.cancelFlight();
+  game.stopRound();
   game.active = false;
-  game.resetGaze();
   scene.components['cardboard-view'].enabled = false;
   document.body.classList.remove('stereo');
   welcome.hidden = false;
