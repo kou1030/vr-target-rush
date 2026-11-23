@@ -95,10 +95,11 @@ AFRAME.registerComponent('rush', {
     });
     this.hit.setAttribute('visible', false);
     this.hud.setAttribute('value', 'FINAL SCORE  ' + this.score);
-    this.notice.setAttribute('value', label + '\nShoot the target below to retry');
+    this.notice.setAttribute('value', label);
     const cam = this.camera.object3D;
     cam.updateWorldMatrix(true, false);
-    this.action.object3D.position.set(0, -.84, -3.5).applyMatrix4(cam.matrixWorld);
+    this.action.object3D.position.set(0, -.65, -3.5).applyMatrix4(cam.matrixWorld);
+    this.action.object3D.scale.setScalar(.78);
     cam.getWorldQuaternion(this.action.object3D.quaternion);
     this.action.setAttribute('visible', true);
     this.action.classList.add('aimable');
@@ -243,7 +244,7 @@ AFRAME.registerComponent('rush', {
  <a-entity light="type: directional; intensity: 1.05" position="-3 7 3"></a-entity>
  <a-circle id="action" class="aimable" position="0 1.6 -5.15" radius=".54" material="shader:flat;color:#f4e4c0">
   <a-ring radius-inner=".43" radius-outer=".50" position="0 0 .009" material="shader:flat;color:#883a32"></a-ring>
-  <a-text id="actionText" value="START" position="0 0 .02" align="center" width="2.65" color="#392920"></a-text>
+  <a-text id="actionText" value="START" position="0 0 .02" align="center" width="3.5" color="#392920"></a-text>
  </a-circle>
  <a-circle class="target" visible="false" radius=".46" material="shader:flat;color:#a94d41">
   <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
