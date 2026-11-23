@@ -16,11 +16,9 @@ button{border:1px solid #453629;border-radius:3px;padding:9px 13px;font:700 15px
 button:disabled{opacity:.5}
 #normal{background:transparent;color:#2f261e}
 #status{font-size:14px;color:#584c40}
-#back,#rotate{position:fixed;z-index:3;background:#302820;color:white}
-#back{top:8px;left:8px;display:none}
+#back{position:fixed;z-index:3;top:8px;left:8px;display:none;width:38px;height:36px;background:#302820;color:white}
+#back::before{content:"";display:block;width:11px;height:11px;border:solid currentColor;border-width:0 0 2px 2px;transform:rotate(45deg);margin-left:2px}
 #divider{display:none;pointer-events:none;position:fixed;inset:0 50%;border-left:2px solid #302820;z-index:2}
-#rotate{bottom:12px;width:100%;text-align:center;display:none;padding:8px}
-@media(orientation:portrait){body.stereo #rotate{display:block}}
 body.stereo #divider{display:block}
 </style>
 <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
@@ -33,6 +31,9 @@ AFRAME.registerComponent('cardboard-view',{
 });
 const GAZE_MS = 500;
 const FLIGHT_MS = 230;
+const ROUND_MS = 30000;
+const BAY_COUNT = 8;
+const TARGET_COLORS = ['#b65747', '#447f92', '#c99440'];
 AFRAME.registerComponent('rush', {
   init() {
     this.el.addEventListener('loaded', () => this.setup(), {once: true});
@@ -41,20 +42,38 @@ AFRAME.registerComponent('rush', {
     for (const id of ['reticle', 'progress']) {
       document.getElementById(id).getObject3D('mesh').renderOrder = 10000;
     }
-    for (const id of ['aim', 'hud', 'action', 'actionText', 'notice', 'progress', 'camera', 'pellet', 'hit']) {
+    for (const id of ['aim', 'timer', 'remaining', 'result', 'action', 'notice', 'progress', 'camera', 'pellet', 'hit']) {
       this[id] = document.getElementById(id);
     }
     this.state = 'ready';
     this.active = false;
     this.score = 0;
-    this.staticSlots = [-2.45, -1.23, 0, 1.23, 2.45];
-    this.targets = [...this.el.querySelectorAll('.target')];
-    this.moving = this.targets[2];
-    this.movingPhase = 0;
+    this.slots = [];
+    this.targets = [];
+    const booth = document.getElementById('booth');
+    const template = document.getElementById('target-template');
+    for (let bay = 0; bay < BAY_COUNT; bay++) {
+      const angle = bay * Math.PI / 4;
+      const stand = booth.content.firstElementChild.cloneNode(true);
+      stand.setAttribute('rotation', `0 ${bay * 45} 0`);
+      this.el.appendChild(stand);
+      for (const height of [1.6, 2.78]) {
+        for (const x of [-1, 1]) this.slots.push({x, height, angle, bay});
+      }
+      for (let row = 0; row < 2; row++) {
+        const index = this.targets.length;
+        const target = template.content.firstElementChild.cloneNode(true);
+        const color = TARGET_COLORS[index % TARGET_COLORS.length];
+        target.setAttribute('material', 'shader: flat; color: ' + color);
+        target.lastElementChild.setAttribute('material', 'shader: flat; color: ' + color);
+        this.el.appendChild(target);
+        this.targets.push({el: target, slot: bay * 4 + (row ? 3 : 0), moving: row === 1});
+      }
+    }
     this.resetGaze();
     document.addEventListener('visibilitychange', () => {
       this.resetGaze();
-      if (document.hidden && this.state === 'playing') this.finish('ROUND ENDED');
+      if (document.hidden && this.state === 'playing') this.finish(false);
       if (document.hidden && this.flight) this.cancelFlight();
     });
   },
@@ -68,71 +87,88 @@ AFRAME.registerComponent('rush', {
   },
   start(now) {
     this.score = 0;
-    this.roundStart = now;
-    this.end = now + 30000;
+    this.end = now + ROUND_MS;
     this.state = 'playing';
     this.action.setAttribute('visible', false);
-    this.notice.setAttribute('value', '');
-    this.movingPhase = 0;
-    this.targets[0].dataset.slot = '0';
-    this.targets[1].dataset.slot = '2';
-    this.targets.forEach(target => {
+    this.result.replaceChildren();
+    this.notice.setAttribute('visible', false);
+    this.timer.setAttribute('visible', true);
+    this.remaining.object3D.scale.x = 1;
+    this.targets.forEach((target, index) => {
+      target.slot = Math.floor(index / 2) * 4 + (target.moving ? 3 : 0);
+      target.born = now;
       this.place(target, now);
-      target.setAttribute('visible', true);
-      target.classList.add('aimable');
-      target.removeAttribute('animation__pop');
-      target.object3D.scale.setScalar(1);
-      target.dataset.born = String(now);
+      target.el.setAttribute('visible', true);
+      target.el.classList.add('aimable');
+      target.el.removeAttribute('animation__pop');
+      target.el.object3D.scale.setScalar(1);
+      target.el.dataset.born = String(now);
     });
     this.refresh();
   },
-  finish(label = 'TIME UP!') {
+  finish(timeUp = true) {
     this.cancelFlight();
     this.state = 'result';
     this.targets.forEach(target => {
-      target.classList.remove('aimable');
-      target.setAttribute('visible', false);
+      target.el.classList.remove('aimable');
+      target.el.setAttribute('visible', false);
     });
     this.hit.setAttribute('visible', false);
-    this.hud.setAttribute('value', 'FINAL SCORE  ' + this.score);
-    this.notice.setAttribute('value', label);
+    this.timer.setAttribute('visible', false);
+    this.notice.setAttribute('visible', timeUp);
+    this.showScore();
     const cam = this.camera.object3D;
     cam.updateWorldMatrix(true, false);
-    this.action.object3D.position.set(0, -.65, -3.5).applyMatrix4(cam.matrixWorld);
+    this.action.object3D.position.set(0, -.55, -3.1).applyMatrix4(cam.matrixWorld);
     this.action.object3D.scale.setScalar(.78);
     cam.getWorldQuaternion(this.action.object3D.quaternion);
     this.action.setAttribute('visible', true);
     this.action.classList.add('aimable');
-    this.actionText.setAttribute('value', 'RETRY');
     this.resetGaze();
     this.refresh();
   },
-  place(target, now) {
-    if (target === this.moving) {
-      const phase = (now - this.roundStart) / 1000 * .55 + this.movingPhase;
-      target.object3D.position.set(2.2 * Math.sin(phase), 2.51, -5.15);
-    } else {
-      target.object3D.position.set(this.staticSlots[Number(target.dataset.slot)], 1.6, -5.15);
+  showScore() {
+    const tens = Math.floor(this.score / 10);
+    const units = this.score % 10;
+    const total = tens + units;
+    for (let index = 0; index < total; index++) {
+      const token = document.createElement('a-circle');
+      const row = Math.floor(index / 10);
+      const rowLength = Math.min(10, total - row * 10);
+      token.setAttribute('radius', index < tens ? .023 : .013);
+      token.setAttribute('position', `${(index % 10 - (rowLength - 1) / 2) * .063} ${-row * .059} 0`);
+      token.setAttribute('material', 'shader: flat; color: ' + (index < tens ? '#e9b958' : '#fff2d2'));
+      this.result.appendChild(token);
     }
-    target.object3D.updateMatrixWorld(true);
   },
-  spawn(target, now) {
-    if (target === this.moving) {
-      this.movingPhase += Math.PI / 2;
-      if (Math.abs(2.2 * Math.sin((now - this.roundStart) / 1000 * .55 + this.movingPhase) - target.object3D.position.x) < 1) {
-        this.movingPhase += Math.PI;
-      }
-    } else {
-      const used = this.targets.filter(other => other !== this.moving).map(other => Number(other.dataset.slot));
-      const free = this.staticSlots.map((_, index) => index).filter(index => !used.includes(index));
-      target.dataset.slot = String(free[Math.floor(Math.random() * free.length)]);
-    }
+  place(target, now) {
+    const slot = this.slots[target.slot];
+    const elapsed = (now - target.born) / 1000;
+    const phase = elapsed * 1.6 + slot.bay * .7;
+    const x = slot.x + (target.moving ? .48 * Math.sin(phase) : 0);
+    const y = slot.height + (target.moving ? .11 * Math.sin(phase * .75) : 0);
+    const rotation = slot.angle + Math.atan2(-x, 5.15);
+    const mesh = target.el.object3D;
+    mesh.position.set(x * Math.cos(slot.angle) - 5.15 * Math.sin(slot.angle), y,
+      -x * Math.sin(slot.angle) - 5.15 * Math.cos(slot.angle));
+    mesh.rotation.y = rotation;
+    mesh.updateMatrixWorld(true);
+  },
+  spawn(element, now) {
+    const target = this.targets.find(candidate => candidate.el === element);
+    const oldBay = this.slots[target.slot].bay;
+    const taken = new Set(this.targets.map(candidate => candidate.slot));
+    const free = this.slots.map((_, index) => index).filter(index => !taken.has(index));
+    const otherBays = free.filter(index => this.slots[index].bay !== oldBay);
+    const choices = otherBays.length ? otherBays : free;
+    target.slot = choices[Math.floor(Math.random() * choices.length)];
+    target.born = now;
     this.place(target, now);
-    target.removeAttribute('animation__pop');
-    target.object3D.scale.setScalar(.15);
-    target.setAttribute('animation__pop', 'property: scale; from: .15 .15 .15; to: 1 1 1; dur: 140; easing: easeOutQuad');
-    target.dataset.born = String(now);
-    target.classList.add('aimable');
+    element.removeAttribute('animation__pop');
+    element.object3D.scale.setScalar(.15);
+    element.setAttribute('animation__pop', 'property: scale; from: .15 .15 .15; to: 1 1 1; dur: 140; easing: easeOutQuad');
+    element.dataset.born = String(now);
+    element.classList.add('aimable');
     this.refresh();
   },
   points(radius) {
@@ -168,10 +204,14 @@ AFRAME.registerComponent('rush', {
       this.start(now);
       return;
     }
-    this.hit.object3D.position.copy(shot.to).add(new THREE.Vector3(0, .47, .12));
-    this.hit.setAttribute('value', '+' + shot.score);
+    const facing = this.camera.object3D.getWorldPosition(new THREE.Vector3()).sub(shot.to).normalize();
+    this.hit.object3D.position.copy(shot.to).addScaledVector(facing, .09);
+    this.hit.object3D.lookAt(this.camera.object3D.getWorldPosition(new THREE.Vector3()));
+    this.hit.setAttribute('material', 'color', shot.score === 10 ? '#ffd072' : '#fff2d2');
+    this.hit.removeAttribute('animation__flash');
+    this.hit.setAttribute('animation__flash', 'property: scale; from: .35 .35 .35; to: 1.35 1.35 1.35; dur: 180; easing: easeOutQuad');
     this.hit.setAttribute('visible', true);
-    this.hitUntil = now + 520;
+    this.hitUntil = now + 180;
     this.spawn(shot.target, now);
   },
   tock() {
@@ -182,8 +222,10 @@ AFRAME.registerComponent('rush', {
         this.finish();
         return;
       }
-      this.hud.setAttribute('value', 'SCORE ' + this.score + '     TIME ' + Math.ceil((this.end - now) / 1000));
-      if (this.flight?.target !== this.moving) this.place(this.moving, now);
+      this.remaining.object3D.scale.x = (this.end - now) / ROUND_MS;
+      for (const target of this.targets) {
+        if (target.moving && this.flight?.target !== target.el) this.place(target, now);
+      }
     }
     if (this.hitUntil && now >= this.hitUntil) {
       this.hit.setAttribute('visible', false);
@@ -218,52 +260,51 @@ AFRAME.registerComponent('rush', {
 <div id="welcome">
  <article>
   <h1>VR TARGET RUSH</h1>
-  <p>中央の的に照準を<strong>0.5秒</strong>合わせ、コルク玉を当てると開始。30秒間で、止まった的と横に動く的を狙います。</p>
-  <p>中心 10点 · 中間 5点 · 外側 1点</p>
+  <p>中央の的に照準を<strong>0.5秒</strong>合わせ、コルク玉を当てると開始。30秒間、前後左右に現れる的を狙います。</p>
+  <p>中心 10点 · 中間 5点 · 外側 1点。上のゲージが残り時間です。終了後の金色の玉は10点、白い玉は1点。下の的を撃つと再挑戦できます。</p>
   <button id="vr" disabled>Cardboardで遊ぶ</button><button id="normal" disabled>通常画面 / PC</button>
   <p id="status" role="status">3Dステージを読み込み中…</p>
   <p>iPhoneは横向きにしてセンサーを許可。PCはマウスをドラッグして照準を動かします。</p>
  </article>
 </div>
-<button id="back">設定へ戻る</button><div id="divider"></div><div id="rotate">スマートフォンを横向きにしてください</div>
+<button id="back" aria-label="設定へ戻る"></button><div id="divider"></div>
+<template id="booth">
+ <a-entity class="booth">
+  <a-box position="0 1.71 -5.76" width="4.55" height="3.42" depth=".12" color="#5b4939"></a-box>
+  <a-box position="0 .48 -5.54" width="4.45" height=".92" depth=".21" color="#6d4a32"></a-box>
+  <a-box position="0 1.07 -5.41" width="4.33" height=".12" depth=".44" color="#ae845c"></a-box>
+  <a-box position="0 2.69 -5.49" width="4.06" height=".10" depth=".12" color="#37322b"></a-box>
+  <a-box position="-2.15 1.71 -5.51" width=".16" height="3.42" depth=".38" color="#79563b"></a-box>
+  <a-box position="2.15 1.71 -5.51" width=".16" height="3.42" depth=".38" color="#79563b"></a-box>
+  <a-box position="0 3.64 -5.46" width="4.46" height=".34" depth=".87" rotation="7 0 0" color="#9b463b"></a-box>
+  <a-box position="0 3.44 -5.02" width="4.38" height=".085" depth=".1" color="#e5ca9b"></a-box>
+ </a-entity>
+</template>
+<template id="target-template">
+ <a-circle class="target" visible="false" radius=".44" segments="32">
+  <a-circle radius=".34" segments="32" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
+  <a-circle radius=".16" segments="24" position="0 0 .02"></a-circle>
+ </a-circle>
+</template>
 <a-scene rush cardboard-view vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" renderer="antialias: true; colorManagement: true" background="color: #b6c4c0">
  <a-plane rotation="-90 0 0" width="60" height="60" color="#afa18a"></a-plane>
- <a-box position="0 1.69 -5.72" width="6.65" height="3.38" depth=".16" color="#5b4939"></a-box>
- <a-box position="0 .48 -5.54" width="6.65" height=".91" depth=".21" color="#6d4a32"></a-box>
- <a-box position="0 1.07 -5.38" width="6.3" height=".12" depth=".47" color="#ae845c"></a-box>
- <a-box position="0 2.48 -5.51" width="5.75" height=".15" depth=".15" color="#37322b"></a-box>
- <a-box position="0 2.48 -5.42" width="5.75" height=".025" depth=".05" color="#a29a85"></a-box>
- <a-box position="-3.35 1.74 -5.33" width=".23" height="3.48" depth=".37" color="#79563b"></a-box>
- <a-box position="3.35 1.74 -5.33" width=".23" height="3.48" depth=".37" color="#79563b"></a-box>
- <a-box position="0 3.62 -5.37" width="7.25" height=".49" depth="1.42" rotation="7 0 0" color="#9b463b"></a-box>
- <a-box position="0 3.37 -4.65" width="7.24" height=".12" depth=".1" color="#e5ca9b"></a-box>
- <a-box position="0 .32 -2.8" width="6.75" height=".64" depth=".46" color="#715139"></a-box>
- <a-box position="0 .68 -2.8" width="6.9" height=".13" depth=".57" color="#a97c53"></a-box>
- <a-box position="0 .57 -2.55" width="6.75" height=".025" depth=".05" color="#c29b71"></a-box>
  <a-entity light="type: ambient; intensity: 1.28"></a-entity>
  <a-entity light="type: directional; intensity: 1.05" position="-3 7 3"></a-entity>
  <a-circle id="action" class="aimable" position="0 1.6 -5.15" radius=".54" material="shader:flat;color:#f4e4c0">
   <a-ring radius-inner=".43" radius-outer=".50" position="0 0 .009" material="shader:flat;color:#883a32"></a-ring>
-  <a-text id="actionText" value="START" position="0 0 .02" align="center" width="3.5" color="#392920"></a-text>
- </a-circle>
- <a-circle class="target" visible="false" radius=".46" material="shader:flat;color:#a94d41">
-  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
-  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#a94d41"></a-circle>
- </a-circle>
- <a-circle class="target" visible="false" radius=".46" material="shader:flat;color:#386d7e">
-  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
-  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#386d7e"></a-circle>
- </a-circle>
- <a-circle class="target" visible="false" radius=".41" material="shader:flat;color:#c1954b">
-  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
-  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#a26d29"></a-circle>
+  <a-circle radius=".15" position="0 0 .02" material="shader:flat;color:#883a32"></a-circle>
  </a-circle>
  <a-sphere id="pellet" radius=".065" segments-width="12" segments-height="8" color="#c1965c" visible="false"></a-sphere>
- <a-text id="hit" value="" color="#fff2d2" align="center" width="4.8" visible="false"></a-text>
+ <a-ring id="hit" radius-inner=".14" radius-outer=".18" material="shader:flat;color:#fff2d2" visible="false"></a-ring>
  <a-entity id="camera" camera="near: .05; far: 100; fov: 75" look-controls position="0 1.6 0">
-  <a-plane position="0 .83 -2" width="1.52" height=".18" material="shader:flat;color:#382e26"></a-plane>
-  <a-text id="hud" value="30 SECONDS" position="0 .83 -1.99" align="center" width="2" color="#fff2d2"></a-text>
-  <a-text id="notice" value="Shoot START to play" position="0 .33 -2" align="center" width="2.1" color="#fff2d2"></a-text>
+  <a-entity id="timer" position="0 .69 -2" visible="false">
+   <a-plane width=".78" height=".045" material="shader:flat;color:#382e26"></a-plane>
+   <a-entity id="remaining" position="-.37 0 .005">
+    <a-plane position=".37 0 0" width=".74" height=".024" material="shader:flat;color:#ecd9a6"></a-plane>
+   </a-entity>
+  </a-entity>
+  <a-text id="notice" value="TIME UP!" position="0 .66 -1.75" align="center" width="2.25" color="#fff2d2" visible="false"></a-text>
+  <a-entity id="result" position="0 .44 -1.75"></a-entity>
   <a-entity id="aim" position="0 0 0" cursor="fuse: false; rayOrigin: entity" raycaster="objects: .aimable; interval: 0; far: 20"></a-entity>
   <a-ring id="reticle" position="0 0 -1" radius-inner=".01" radius-outer=".015" material="shader:flat;color:white;depthTest:false;depthWrite:false;transparent:true"></a-ring>
   <a-ring id="progress" position="0 0 -1" radius-inner=".019" radius-outer=".024" theta-length="0" material="shader:flat;color:#ffd05b;depthTest:false;depthWrite:false;transparent:true;opacity:.99"></a-ring>
@@ -280,7 +321,7 @@ async function enter(stereo){
  if(stereo&&document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
 }
 document.querySelector('#vr').onclick=()=>enter(true);document.querySelector('#normal').onclick=()=>enter(false);
-document.querySelector('#back').onclick=()=>{const game=scene.components.rush;if(game.state==='playing')game.finish('ROUND ENDED');game.cancelFlight();game.active=false;game.resetGaze();scene.components['cardboard-view'].enabled=false;document.body.classList.remove('stereo');document.querySelector('#welcome').hidden=false;document.querySelector('#back').style.display='none';if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});};
+document.querySelector('#back').onclick=()=>{const game=scene.components.rush;if(game.state==='playing')game.finish(false);game.cancelFlight();game.active=false;game.resetGaze();scene.components['cardboard-view'].enabled=false;document.body.classList.remove('stereo');document.querySelector('#welcome').hidden=false;document.querySelector('#back').style.display='none';if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});};
 setTimeout(()=>{if(!scene.hasLoaded)statusEl.textContent='読み込みに時間がかかっています。通信とA-Frame CDNへの接続を確認し、再読み込みしてください。';},15000);
 </script>
 </body></html>
