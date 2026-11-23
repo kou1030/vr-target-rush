@@ -3,9 +3,25 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>VR TARGET RUSH</title>
-<meta name="description" content="1秒見つめて狙い撃ち。Google Cardboardで楽しむ30秒のVR射的ゲーム。">
+<meta name="description" content="的を0.5秒見つめてコルク玉を撃つ、30秒のVR射的ゲーム。">
 <style>
-.a-enter-vr,.a-enter-ar{display:none!important}*{box-sizing:border-box}body{margin:0;background:#10263f;font-family:system-ui,sans-serif;color:white}#welcome{position:fixed;inset:0;z-index:5;display:grid;place-items:center;padding:20px;background:linear-gradient(145deg,#10263feb,#174c67e8)}article{max-width:560px;padding:30px;border:1px solid #ffffff40;border-radius:24px;background:#10263fe8;box-shadow:0 25px 90px #0005}small{color:#67e4dd;letter-spacing:.2em}h1{font-size:clamp(32px,7vw,54px);line-height:1;margin:16px 0;color:#ffda65}p{line-height:1.7}button{border:0;border-radius:12px;padding:14px 18px;font-size:16px;font-weight:700;background:#ffda65;color:#12283d;cursor:pointer;margin:5px 4px 5px 0}button:disabled{opacity:.5}#normal{background:#d8f6ff}#status{font-size:14px;color:#d8e8f0}#back{position:fixed;top:8px;left:8px;z-index:3;font-size:14px;padding:9px;display:none;background:#10263fcc;color:white}#divider{display:none;pointer-events:none;position:fixed;inset:0 50%;border-left:2px solid #10263f;z-index:2}#rotate{position:fixed;bottom:12px;width:100%;text-align:center;z-index:3;display:none;background:#10263fdd;padding:8px}@media(orientation:portrait){body.stereo #rotate{display:block}}body.stereo #divider{display:block}[hidden]{display:none!important}
+.a-enter-vr,.a-enter-ar,[hidden]{display:none!important}
+*{box-sizing:border-box}
+body{margin:0;background:#382d23;font-family:system-ui,sans-serif;color:#2f261e}
+#welcome{position:fixed;inset:0;z-index:5;display:grid;place-items:safe center;overflow:auto;padding:16px;background:#332b21a6}
+article{width:min(100%,480px);padding:24px;background:#f7efdc;border-top:5px solid #963c32}
+h1{font-family:Georgia,serif;font-size:clamp(28px,6vw,44px);line-height:1;margin:0 0 14px}
+p{line-height:1.5;margin:10px 0}
+button{border:1px solid #453629;border-radius:3px;padding:9px 13px;font:700 15px system-ui;background:#793229;color:white;cursor:pointer;margin:3px 6px 3px 0}
+button:disabled{opacity:.5}
+#normal{background:transparent;color:#2f261e}
+#status{font-size:14px;color:#584c40}
+#back,#rotate{position:fixed;z-index:3;background:#302820;color:white}
+#back{top:8px;left:8px;display:none}
+#divider{display:none;pointer-events:none;position:fixed;inset:0 50%;border-left:2px solid #302820;z-index:2}
+#rotate{bottom:12px;width:100%;text-align:center;display:none;padding:8px}
+@media(orientation:portrait){body.stereo #rotate{display:block}}
+body.stereo #divider{display:block}
 </style>
 <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 <script>
@@ -15,51 +31,238 @@ AFRAME.registerComponent('cardboard-view',{
  init(){this.enabled=false;this.stereo=new THREE.StereoCamera();this.stereo.aspect=.5;this.size=new THREE.Vector2();this.el.addEventListener('renderstart',()=>this.install());},
  install(){const r=this.el.renderer,original=r.render.bind(r);this.original=original;r.render=(world,camera)=>{if(!this.enabled||camera!==this.el.camera)return original(world,camera);world.updateMatrixWorld();camera.updateMatrixWorld();this.stereo.update(camera);r.getSize(this.size);const w=this.size.x,h=this.size.y,auto=r.autoClear;r.autoClear=false;r.setScissorTest(false);r.clear();r.setScissorTest(true);r.setScissor(0,0,w/2,h);r.setViewport(0,0,w/2,h);original(world,this.stereo.cameraL);r.setScissor(w/2,0,w/2,h);r.setViewport(w/2,0,w/2,h);original(world,this.stereo.cameraR);r.setScissorTest(false);r.setViewport(0,0,w,h);r.autoClear=auto;};}
 });
-AFRAME.registerComponent('rush',{
- init(){this.el.addEventListener('loaded',()=>this.setup(),{once:true});},
- setup(){
-  for(const id of ['reticle','progress']){const mesh=document.getElementById(id).getObject3D('mesh');if(mesh)mesh.renderOrder=10000;}this.state='ready';this.score=0;this.focus=null;this.since=0;this.end=0;this.active=false;
-  this.cursor=document.querySelector('#aim');this.hud=document.querySelector('#hud');this.action=document.querySelector('#action');this.notice=document.querySelector('#notice');this.progress=document.querySelector('#progress');this.targets=[];
-  this.slots=[[-2.6,1.1,-5],[-1.3,1.1,-5],[0,1.1,-5],[1.3,1.1,-5],[2.6,1.1,-5],[-2.6,2.5,-5],[-1.3,2.5,-5],[0,2.5,-5],[1.3,2.5,-5],[2.6,2.5,-5],[0,1.6,-4.6]];
-  ['#f75b75','#37b9ed','#ffd05b'].forEach((color,i)=>{const e=document.createElement('a-circle');e.setAttribute('radius',.52);e.setAttribute('material','shader: flat; color: '+color);e.dataset.slot=String([5,10,9][i]);e.dataset.ready='0';e.classList.add('target');e.innerHTML='<a-ring radius-inner=".30" radius-outer=".34" position="0 0 .006" material="shader:flat;color:white"></a-ring><a-circle radius=".16" position="0 0 .012" material="shader:flat;color:#fff2b1"></a-circle>';this.el.appendChild(e);this.targets.push(e);e.setAttribute('position',this.slots[Number(e.dataset.slot)].join(' '));e.setAttribute('visible',false);});
-  this.el.object3D.attach(this.action.object3D);this.action.object3D.position.set(0,1.6,-2);this.action.classList.add('aimable');
-  document.addEventListener('visibilitychange',()=>{this.resetGaze();if(document.hidden&&this.state==='playing')this.finish('ROUND ENDED');});
- },
- resetGaze(){this.focus=null;this.since=0;this.progress.setAttribute('theta-length',0);},
- refresh(){this.cursor.components.raycaster.refreshObjects();},
- start(now){this.score=0;this.end=now+30000;this.state='playing';this.action.classList.remove('aimable');this.action.setAttribute('visible',false);this.notice.setAttribute('value','');this.resetGaze();this.targets.forEach(e=>{e.dataset.ready='1';e.classList.add('aimable');e.setAttribute('visible',true);e.object3D.scale.setScalar(1);});this.refresh();},
- finish(label='TIME UP!'){this.state='result';this.targets.forEach(e=>{e.classList.remove('aimable');e.setAttribute('visible',false);});this.hud.setAttribute('value','FINAL SCORE  '+this.score);this.notice.setAttribute('value',label+'\n'+this.score+' POINTS');this.action.setAttribute('visible',true);const cam=document.querySelector('#camera').object3D;this.action.object3D.position.set(0,-.5,-2).applyMatrix4(cam.matrixWorld);cam.getWorldQuaternion(this.action.object3D.quaternion);this.action.classList.add('aimable');document.querySelector('#actionText').setAttribute('value','LOOK TO RESTART');this.resetGaze();this.refresh();},
- spawn(e,now){const old=Number(e.dataset.slot),used=this.targets.filter(t=>t!==e).map(t=>Number(t.dataset.slot));const free=this.slots.map((_,i)=>i).filter(i=>i!==old&&!used.includes(i));const n=free[Math.floor(Math.random()*free.length)];e.dataset.slot=String(n);e.setAttribute('position',this.slots[n].join(' '));e.dataset.ready='1';e.classList.add('aimable');e.object3D.scale.setScalar(.05);e.removeAttribute('animation__pop');e.setAttribute('animation__pop','property: scale; from: .05 .05 .05; to: 1 1 1; dur: 180; easing: easeOutBack');e.dataset.born=String(now);this.refresh();},
- points(r){return r<=.16?10:r<=.34?5:1;},
- shoot(e,point,now){if(this.state!=='playing'||e.dataset.ready!=='1'||now>=this.end)return;const local=e.object3D.worldToLocal(point.clone());const points=this.points(Math.hypot(local.x,local.y));e.dataset.ready='0';e.classList.remove('aimable');this.score+=points;this.resetGaze();this.refresh();
-  const pop=document.querySelector('#hit');const pos=e.getAttribute('position');pop.setAttribute('position',{x:pos.x,y:pos.y+.6,z:pos.z+.08});pop.setAttribute('value','+'+points);pop.setAttribute('visible',true);this.hitUntil=now+650;this.spawn(e,now);
- },
- tick(){if(!this.active)return;const now=performance.now();if(this.state==='playing'){if(now>=this.end){this.finish();return;}this.hud.setAttribute('value','SCORE '+this.score+'     TIME '+Math.ceil((this.end-now)/1000));}if(this.hitUntil&&now>this.hitUntil){document.querySelector('#hit').setAttribute('visible',false);this.hitUntil=0;}
-  const ray=this.cursor.components.raycaster;if(!ray)return;ray.checkIntersections();let e=ray.intersectedEls.find(x=>x.classList.contains('aimable'));if(e?.classList.contains('target')&&now-Number(e.dataset.born||0)<220)e=null;
-  if(!e){this.resetGaze();return;}if(e!==this.focus){this.focus=e;this.since=now;}const elapsed=now-this.since;this.progress.setAttribute('theta-length',Math.min(360,elapsed*.36));if(elapsed<1000)return;
-  // Re-read the raycast at the firing instant, not at initial gaze entry.
-  const hit=ray.getIntersection(e);if(!hit){this.resetGaze();return;}if(e===this.action){this.start(now);}else this.shoot(e,hit.point,now);
- }
+const GAZE_MS = 500;
+const FLIGHT_MS = 230;
+AFRAME.registerComponent('rush', {
+  init() {
+    this.el.addEventListener('loaded', () => this.setup(), {once: true});
+  },
+  setup() {
+    for (const id of ['reticle', 'progress']) {
+      document.getElementById(id).getObject3D('mesh').renderOrder = 10000;
+    }
+    for (const id of ['aim', 'hud', 'action', 'actionText', 'notice', 'progress', 'camera', 'pellet', 'hit']) {
+      this[id] = document.getElementById(id);
+    }
+    this.state = 'ready';
+    this.active = false;
+    this.score = 0;
+    this.staticSlots = [-2.45, -1.23, 0, 1.23, 2.45];
+    this.targets = [...this.el.querySelectorAll('.target')];
+    this.moving = this.targets[2];
+    this.movingPhase = 0;
+    this.resetGaze();
+    document.addEventListener('visibilitychange', () => {
+      this.resetGaze();
+      if (document.hidden && this.state === 'playing') this.finish('ROUND ENDED');
+      if (document.hidden && this.flight) this.cancelFlight();
+    });
+  },
+  resetGaze() {
+    if (this.focus) this.progress.setAttribute('theta-length', 0);
+    this.focus = null;
+    this.since = 0;
+  },
+  refresh() {
+    this.aim.components.raycaster.refreshObjects();
+  },
+  start(now) {
+    this.score = 0;
+    this.roundStart = now;
+    this.end = now + 30000;
+    this.state = 'playing';
+    this.action.setAttribute('visible', false);
+    this.notice.setAttribute('value', '');
+    this.movingPhase = 0;
+    this.targets[0].dataset.slot = '0';
+    this.targets[1].dataset.slot = '2';
+    this.targets.forEach(target => {
+      this.place(target, now);
+      target.setAttribute('visible', true);
+      target.classList.add('aimable');
+      target.removeAttribute('animation__pop');
+      target.object3D.scale.setScalar(1);
+      target.dataset.born = String(now);
+    });
+    this.refresh();
+  },
+  finish(label = 'TIME UP!') {
+    this.cancelFlight();
+    this.state = 'result';
+    this.targets.forEach(target => {
+      target.classList.remove('aimable');
+      target.setAttribute('visible', false);
+    });
+    this.hit.setAttribute('visible', false);
+    this.hud.setAttribute('value', 'FINAL SCORE  ' + this.score);
+    this.notice.setAttribute('value', label + '\nShoot the target below to retry');
+    const cam = this.camera.object3D;
+    cam.updateWorldMatrix(true, false);
+    this.action.object3D.position.set(0, -.84, -3.5).applyMatrix4(cam.matrixWorld);
+    cam.getWorldQuaternion(this.action.object3D.quaternion);
+    this.action.setAttribute('visible', true);
+    this.action.classList.add('aimable');
+    this.actionText.setAttribute('value', 'RETRY');
+    this.resetGaze();
+    this.refresh();
+  },
+  place(target, now) {
+    if (target === this.moving) {
+      const phase = (now - this.roundStart) / 1000 * .55 + this.movingPhase;
+      target.object3D.position.set(2.2 * Math.sin(phase), 2.51, -5.15);
+    } else {
+      target.object3D.position.set(this.staticSlots[Number(target.dataset.slot)], 1.6, -5.15);
+    }
+    target.object3D.updateMatrixWorld(true);
+  },
+  spawn(target, now) {
+    if (target === this.moving) {
+      this.movingPhase += Math.PI / 2;
+      if (Math.abs(2.2 * Math.sin((now - this.roundStart) / 1000 * .55 + this.movingPhase) - target.object3D.position.x) < 1) {
+        this.movingPhase += Math.PI;
+      }
+    } else {
+      const used = this.targets.filter(other => other !== this.moving).map(other => Number(other.dataset.slot));
+      const free = this.staticSlots.map((_, index) => index).filter(index => !used.includes(index));
+      target.dataset.slot = String(free[Math.floor(Math.random() * free.length)]);
+    }
+    this.place(target, now);
+    target.removeAttribute('animation__pop');
+    target.object3D.scale.setScalar(.15);
+    target.setAttribute('animation__pop', 'property: scale; from: .15 .15 .15; to: 1 1 1; dur: 140; easing: easeOutQuad');
+    target.dataset.born = String(now);
+    target.classList.add('aimable');
+    this.refresh();
+  },
+  points(radius) {
+    return radius <= .16 ? 10 : radius <= .34 ? 5 : 1;
+  },
+  shoot(target, point, now) {
+    const cam = this.camera.object3D;
+    const from = cam.localToWorld(new THREE.Vector3(.16, -.26, -.65));
+    const local = target.object3D.worldToLocal(point.clone());
+    const score = target === this.action ? 0 : this.points(Math.hypot(local.x, local.y));
+    this.score += score;
+    target.classList.remove('aimable');
+    this.flight = {target, from, to: point.clone(), score, fired: now};
+    this.pellet.object3D.position.copy(from);
+    this.pellet.setAttribute('visible', true);
+    this.resetGaze();
+    this.refresh();
+  },
+  cancelFlight() {
+    if (!this.flight) return;
+    if (this.flight.target === this.action) this.action.classList.add('aimable');
+    this.flight = null;
+    this.pellet.setAttribute('visible', false);
+  },
+  movePellet(now) {
+    const shot = this.flight;
+    const progress = Math.min(1, (now - shot.fired) / FLIGHT_MS);
+    this.pellet.object3D.position.lerpVectors(shot.from, shot.to, progress);
+    if (progress < 1) return;
+    this.cancelFlight();
+    if (shot.target === this.action) {
+      this.action.classList.remove('aimable');
+      this.start(now);
+      return;
+    }
+    this.hit.object3D.position.copy(shot.to).add(new THREE.Vector3(0, .47, .12));
+    this.hit.setAttribute('value', '+' + shot.score);
+    this.hit.setAttribute('visible', true);
+    this.hitUntil = now + 520;
+    this.spawn(shot.target, now);
+  },
+  tock() {
+    if (!this.active) return;
+    const now = performance.now();
+    if (this.state === 'playing') {
+      if (now >= this.end) {
+        this.finish();
+        return;
+      }
+      this.hud.setAttribute('value', 'SCORE ' + this.score + '     TIME ' + Math.ceil((this.end - now) / 1000));
+      if (this.flight?.target !== this.moving) this.place(this.moving, now);
+    }
+    if (this.hitUntil && now >= this.hitUntil) {
+      this.hit.setAttribute('visible', false);
+      this.hitUntil = 0;
+    }
+    if (this.flight) {
+      this.movePellet(now);
+      return;
+    }
+    const ray = this.aim.components.raycaster;
+    ray.checkIntersections();
+    const target = ray.intersectedEls.find(el => el.classList.contains('aimable'));
+    if (!target || now - Number(target.dataset.born || 0) < 150) {
+      this.resetGaze();
+      return;
+    }
+    if (target !== this.focus) {
+      this.focus = target;
+      this.since = now;
+    }
+    const elapsed = now - this.since;
+    this.progress.setAttribute('theta-length', Math.min(360, 360 * elapsed / GAZE_MS));
+    if (elapsed < GAZE_MS) return;
+    const hit = ray.getIntersection(target);
+    if (hit) this.shoot(target, hit.point, now);
+    else this.resetGaze();
+  }
 });
 </script>
 </head>
 <body>
-<div id="welcome"><article><small>LOOK · AIM · POP!</small><h1>VR TARGET<br>RUSH</h1><p>カラフルな的を<strong>1秒見つめて</strong>狙い撃ち。<br>30秒でハイスコアに挑戦しよう！</p><p>中心 <strong>10点</strong> ／ 中リング <strong>5点</strong> ／ 外側 <strong>1点</strong><br>iPhoneは横向き・画面回転ロックを解除。<br>センサーを許可してからCardboardにセットしてください。</p><button id="vr" disabled>Cardboardで遊ぶ</button><button id="normal" disabled>通常画面 / PC</button><p id="status" role="status">3Dステージを読み込み中…</p><p style="font-size:14px">PCはマウスドラッグで視点を操作。歩かず、周囲が安全な場所で遊んでください。気分が悪くなったら中止してください。</p></article></div>
+<div id="welcome">
+ <article>
+  <h1>VR TARGET RUSH</h1>
+  <p>中央の的に照準を<strong>0.5秒</strong>合わせ、コルク玉を当てると開始。30秒間で、止まった的と横に動く的を狙います。</p>
+  <p>中心 10点 · 中間 5点 · 外側 1点</p>
+  <button id="vr" disabled>Cardboardで遊ぶ</button><button id="normal" disabled>通常画面 / PC</button>
+  <p id="status" role="status">3Dステージを読み込み中…</p>
+  <p>iPhoneは横向きにしてセンサーを許可。PCはマウスをドラッグして照準を動かします。</p>
+ </article>
+</div>
 <button id="back">設定へ戻る</button><div id="divider"></div><div id="rotate">スマートフォンを横向きにしてください</div>
-<a-scene rush cardboard-view vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" renderer="antialias: true; colorManagement: true" background="color: #93dbef">
- <a-plane rotation="-90 0 0" width="60" height="60" color="#60c7b4"></a-plane>
- <a-box position="0 1.9 -6" width="9" height="4" depth=".35" color="#194c6e"></a-box>
- <a-box position="0 .25 -4.9" width="9" height=".5" depth="1.5" color="#f5c064"></a-box>
- <a-box position="0 3.95 -5.7" width="9.5" height=".25" depth="1.4" color="#ff6d83"></a-box>
- <a-box position="-4.4 2 -5.3" width=".22" height="4" depth=".3" color="#fff2ce"></a-box><a-box position="4.4 2 -5.3" width=".22" height="4" depth=".3" color="#fff2ce"></a-box>
- <a-text value="TARGET RUSH" align="center" position="0 3.5 -5.7" width="8" color="#ffda65"></a-text>
- <a-sphere position="-5 4 -7" radius=".7" color="#f75b75"></a-sphere><a-sphere position="5 4.5 -8" radius=".85" color="#ffd05b"></a-sphere>
- <a-entity light="type: ambient; intensity: 1"></a-entity><a-entity light="type: directional; intensity: .7" position="2 5 3"></a-entity>
- <a-text id="hit" value="" color="#fff6b0" align="center" width="5" visible="false"></a-text>
+<a-scene rush cardboard-view vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" renderer="antialias: true; colorManagement: true" background="color: #b6c4c0">
+ <a-plane rotation="-90 0 0" width="60" height="60" color="#afa18a"></a-plane>
+ <a-box position="0 1.69 -5.72" width="6.65" height="3.38" depth=".16" color="#5b4939"></a-box>
+ <a-box position="0 .48 -5.54" width="6.65" height=".91" depth=".21" color="#6d4a32"></a-box>
+ <a-box position="0 1.07 -5.38" width="6.3" height=".12" depth=".47" color="#ae845c"></a-box>
+ <a-box position="0 2.48 -5.51" width="5.75" height=".15" depth=".15" color="#37322b"></a-box>
+ <a-box position="0 2.48 -5.42" width="5.75" height=".025" depth=".05" color="#a29a85"></a-box>
+ <a-box position="-3.35 1.74 -5.33" width=".23" height="3.48" depth=".37" color="#79563b"></a-box>
+ <a-box position="3.35 1.74 -5.33" width=".23" height="3.48" depth=".37" color="#79563b"></a-box>
+ <a-box position="0 3.62 -5.37" width="7.25" height=".49" depth="1.42" rotation="7 0 0" color="#9b463b"></a-box>
+ <a-box position="0 3.37 -4.65" width="7.24" height=".12" depth=".1" color="#e5ca9b"></a-box>
+ <a-box position="0 .32 -2.8" width="6.75" height=".64" depth=".46" color="#715139"></a-box>
+ <a-box position="0 .68 -2.8" width="6.9" height=".13" depth=".57" color="#a97c53"></a-box>
+ <a-box position="0 .57 -2.55" width="6.75" height=".025" depth=".05" color="#c29b71"></a-box>
+ <a-entity light="type: ambient; intensity: 1.28"></a-entity>
+ <a-entity light="type: directional; intensity: 1.05" position="-3 7 3"></a-entity>
+ <a-circle id="action" class="aimable" position="0 1.6 -5.15" radius=".54" material="shader:flat;color:#f4e4c0">
+  <a-ring radius-inner=".43" radius-outer=".50" position="0 0 .009" material="shader:flat;color:#883a32"></a-ring>
+  <a-text id="actionText" value="START" position="0 0 .02" align="center" width="2.65" color="#392920"></a-text>
+ </a-circle>
+ <a-circle class="target" visible="false" radius=".46" material="shader:flat;color:#a94d41">
+  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
+  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#a94d41"></a-circle>
+ </a-circle>
+ <a-circle class="target" visible="false" radius=".46" material="shader:flat;color:#386d7e">
+  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
+  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#386d7e"></a-circle>
+ </a-circle>
+ <a-circle class="target" visible="false" radius=".41" material="shader:flat;color:#c1954b">
+  <a-circle radius=".34" position="0 0 .01" material="shader:flat;color:#f2e4c5"></a-circle>
+  <a-circle radius=".16" position="0 0 .02" material="shader:flat;color:#a26d29"></a-circle>
+ </a-circle>
+ <a-sphere id="pellet" radius=".065" segments-width="12" segments-height="8" color="#c1965c" visible="false"></a-sphere>
+ <a-text id="hit" value="" color="#fff2d2" align="center" width="4.8" visible="false"></a-text>
  <a-entity id="camera" camera="near: .05; far: 100; fov: 75" look-controls position="0 1.6 0">
-  <a-plane position="0 .65 -2" width="1.9" height=".24" material="shader:flat;color:#10263f;opacity:.85"></a-plane><a-text id="hud" value="30 SECONDS / 3 TARGETS" position="0 .65 -1.99" align="center" width="2.6" color="#ffffff"></a-text>
-  <a-text id="notice" value="READY?" position="0 .32 -2" align="center" width="2.6" color="#ffda65"></a-text>
-  <a-plane id="action" position="0 0 -2" width="1.3" height=".28" material="shader:flat;color:#ffd05b"><a-text id="actionText" value="LOOK TO START" position="0 0 .01" align="center" width="2" color="#10263f"></a-text></a-plane>
+  <a-plane position="0 .83 -2" width="1.52" height=".18" material="shader:flat;color:#382e26"></a-plane>
+  <a-text id="hud" value="30 SECONDS" position="0 .83 -1.99" align="center" width="2" color="#fff2d2"></a-text>
+  <a-text id="notice" value="Shoot START to play" position="0 .33 -2" align="center" width="2.1" color="#fff2d2"></a-text>
   <a-entity id="aim" position="0 0 0" cursor="fuse: false; rayOrigin: entity" raycaster="objects: .aimable; interval: 0; far: 20"></a-entity>
   <a-ring id="reticle" position="0 0 -1" radius-inner=".01" radius-outer=".015" material="shader:flat;color:white;depthTest:false;depthWrite:false;transparent:true"></a-ring>
   <a-ring id="progress" position="0 0 -1" radius-inner=".019" radius-outer=".024" theta-length="0" material="shader:flat;color:#ffd05b;depthTest:false;depthWrite:false;transparent:true;opacity:.99"></a-ring>
@@ -67,7 +270,7 @@ AFRAME.registerComponent('rush',{
 </a-scene>
 <script>
 const scene=document.querySelector('a-scene'),statusEl=document.querySelector('#status');
-function ready(){document.querySelector('#vr').disabled=false;document.querySelector('#normal').disabled=false;statusEl.textContent='準備完了。表示方法を選び、STARTを1秒見つめると開始します。';}
+function ready(){document.querySelector('#vr').disabled=false;document.querySelector('#normal').disabled=false;statusEl.textContent='';}
 scene.addEventListener('loaded',ready);if(scene.hasLoaded)ready();
 async function enter(stereo){
  try{if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){const result=await DeviceOrientationEvent.requestPermission();if(result!=='granted'){statusEl.textContent='センサーが許可されていません。Safariの設定を確認して再度許可してください。通常画面ではドラッグ操作も使えます。';if(stereo)return;}else scene.emit('deviceorientationpermissiongranted');}
@@ -76,7 +279,7 @@ async function enter(stereo){
  if(stereo&&document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
 }
 document.querySelector('#vr').onclick=()=>enter(true);document.querySelector('#normal').onclick=()=>enter(false);
-document.querySelector('#back').onclick=()=>{const game=scene.components.rush;if(game.state==='playing')game.finish('ROUND ENDED');game.active=false;game.resetGaze();scene.components['cardboard-view'].enabled=false;document.body.classList.remove('stereo');document.querySelector('#welcome').hidden=false;document.querySelector('#back').style.display='none';if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});};
+document.querySelector('#back').onclick=()=>{const game=scene.components.rush;if(game.state==='playing')game.finish('ROUND ENDED');game.cancelFlight();game.active=false;game.resetGaze();scene.components['cardboard-view'].enabled=false;document.body.classList.remove('stereo');document.querySelector('#welcome').hidden=false;document.querySelector('#back').style.display='none';if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});};
 setTimeout(()=>{if(!scene.hasLoaded)statusEl.textContent='読み込みに時間がかかっています。通信とA-Frame CDNへの接続を確認し、再読み込みしてください。';},15000);
 </script>
 </body></html>
